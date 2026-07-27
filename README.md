@@ -264,14 +264,14 @@ This program can be detected by:
 
 ## Screenshots
 
-### 1
-![1](https://github.com/Mateobro33/discord-keylogger/blob/b9cb58d63db688bc510de2eee0364a737c053bd5/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170542.png)
+### System compromised
+![System compromised](https://github.com/NISMOR33/discord-keylogger/blob/5721cc84206698ae6c3e6e032e08f86029d1adf5/1.png)
 
-### 2
-![2](https://github.com/Mateobro33/discord-keylogger/blob/9afc8252f84fd6ee886053e2d32fc0dae3bad97f/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170430.png)
+### Backdoor deployed
+![Backdoor deployed](https://github.com/NISMOR33/discord-keylogger/blob/5721cc84206698ae6c3e6e032e08f86029d1adf5/2.png)
 
-### 3
-![3](https://github.com/Mateobro33/discord-keylogger/blob/0efb1fcc9b54fe5590105f5864dd9c5eaea831f0/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170629.png)
+### Data intercepted
+![Data intercepted](https://github.com/NISMOR33/discord-keylogger/blob/5721cc84206698ae6c3e6e032e08f86029d1adf5/3.png)
 
 ---
 
