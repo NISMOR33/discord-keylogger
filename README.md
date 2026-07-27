@@ -1,205 +1,198 @@
-# Keylogger Pédagogique
+# Windows Keylogger with Discord Exfiltration
 
-Projet académique - École 42 - Module de cybersécurité
+Advanced keystroke logger for Windows with real-time data exfiltration via Discord webhooks.
 
 ---
 
 ## Overview
 
-Ce projet est un keylogger développé dans un cadre académique pour comprendre les mécanismes de surveillance système et les techniques de hooking sous Windows. Il capture les frappes clavier et exfiltre les données vers des webhooks Discord via des embeds formatés.
-
-### Objectifs pédagogiques
-
-- Comprendre le fonctionnement des hooks clavier Windows (`WH_KEYBOARD_LL`)
-- Étudier les techniques d'injection de code et de surveillance
-- Analyser les méthodes d'exfiltration de données via API web
-- Apprendre les contre-mesures de sécurité
+This project implements a low-level keyboard hook for Windows that captures keystrokes and exfiltrates data to Discord webhooks using formatted embeds. It includes comprehensive system information gathering, session management, and stealth capabilities.
 
 ---
 
 ## Features
 
-### Capture des frappes
+### Keystroke Capture
 
-- Hook clavier global bas niveau (`WH_KEYBOARD_LL`)
-- Détection de fenêtre active avec titre et horodatage
-- Mapping des touches spéciales (Shift, Ctrl, Alt, Win, etc.)
-- Formatage configurable (lisible, décimal, hexadécimal)
-- Gestion de la casse (Caps Lock, Shift)
-- Rotation des fichiers logs par heure
+- Global low-level keyboard hook (`WH_KEYBOARD_LL`)
+- Active window detection with title and timestamp
+- Special key mapping (Shift, Ctrl, Alt, Win, etc.)
+- Configurable output format (readable, decimal, hexadecimal)
+- Case handling (Caps Lock, Shift)
+- Hourly log file rotation
 
-### Exfiltration des données
+### Data Exfiltration
 
-- Envoi périodique via cURL (configurable, défaut: 15 secondes)
-- Exécution de cURL en mode caché (fenêtre masquée)
-- 4 webhooks Discord distincts (infos, connexion, logs, désactivation)
-- Embeds Discord avec images, avatars et champs structurés
-- Buffer mémoire pour accumulation des frappes
-- Envoi de fichier log complet en pièce jointe
+- Periodic transmission via cURL (configurable, default: 15 seconds)
+- Hidden cURL execution (no window)
+- 4 distinct Discord webhooks (info, connection, logs, deactivation)
+- Discord embeds with images, avatars, and structured fields
+- Memory buffer for keystroke accumulation
+- Complete log file attachment
 
-### Collecte d'informations système
+### System Information Gathering
 
-Au démarrage, envoi des métadonnées:
-- TARGET ID (généré depuis l'IP locale)
-- MACHINE (nom de l'ordinateur)
-- USER (nom d'utilisateur Windows)
-- IP ADDRESS (adresse IP locale)
-- SYSTEM (version Windows: 7/8/10+, architecture 32/64-bit)
+On startup, sends metadata:
+- TARGET ID (generated from local IP)
+- MACHINE (computer name)
+- USER (Windows username)
+- IP ADDRESS (local IP address)
+- SYSTEM (Windows version: 7/8/10+, architecture 32/64-bit)
 - PROCESSOR (AMD64, ARM, IA64, x86)
-- MEMORY (RAM totale et disponible en GB)
-- DISK SPACE (espace disque C: total et libre)
+- MEMORY (total and available RAM in GB)
+- DISK SPACE (C: drive total and free space)
 
-### Gestion de session
+### Session Management
 
-- Message de connexion au démarrage (hook installé)
-- Message de désactivation à la fermeture
-- Handler pour interruption forcée (Ctrl+C, fermeture fenêtre)
-- Envoi des logs finaux avant terminaison
-- Nettoyage automatique des fichiers temporaires
+- Connection message on startup (hook installed)
+- Deactivation message on shutdown
+- Handler for forced interruption (Ctrl+C, window close)
+- Final logs sent before termination
+- Automatic temporary file cleanup
 
-### Fonctionnalités avancées
+### Advanced Features
 
-- Console masquée automatiquement au démarrage
-- Sous-système Windows (pas de console visible)
-- Attente si système en phase de boot (bootwait)
-- Gestion des fichiers temporaires avec tracking
-- Échappement JSON pour les caractères spéciaux
-- Horodatage ISO 8601 pour tous les événements
+- Console automatically hidden on startup
+- Windows subsystem (no visible console)
+- Boot wait if system is in boot phase (bootwait)
+- Temporary file tracking and management
+- JSON escaping for special characters
+- ISO 8601 timestamping for all events
 
 ---
 
 ## Architecture
 
-### Stack technique
+### Technical Stack
 
-- **Langage**: C++ (Windows API)
-- **Plateforme**: Windows x64
+- **Language**: C++ (Windows API)
+- **Platform**: Windows x64
 - **IDE**: Visual Studio (Release)
-- **Sous-système**: Windows (`/SUBSYSTEM:windows /ENTRY:mainCRTStartup`)
-- **Librairies**: ws2_32, iphlpapi, psapi, shell32, ole32
-- **Dépendance externe**: cURL (exécution via CreateProcess)
+- **Subsystem**: Windows (`/SUBSYSTEM:windows /ENTRY:mainCRTStartup`)
+- **Libraries**: ws2_32, iphlpapi, psapi, shell32, ole32
+- **External dependency**: cURL (executed via CreateProcess)
 
-### Flux de données
+### Data Flow
 
 ```
-Hook Clavier → Mapping touches → Buffer mémoire → Fichier log (par heure)
+Keyboard Hook → Key Mapping → Memory Buffer → Log File (hourly)
                                                         ↓
-                                              cURL caché → Webhook Discord
+                                              Hidden cURL → Discord Webhook
                                                         ↓
-                                              Embed + fichier pièce jointe
+                                              Embed + File Attachment
 ```
 
-### Structure du code
+### Code Structure
 
-- `executeCurlHidden()`: Exécution cachée de cURL
-- `HookCallback()`: Callback pour interception des touches
-- `Save()`: Traitement et formatage des frappes
-- `sendInfoMessage()`: Envoi infos système au démarrage
-- `sendConnexionMessage()`: Notification de connexion
-- `sendLogMessage()`: Envoi des logs (embed + fichier)
-- `sendExitMessage()`: Notification de désactivation
-- `consoleHandler()`: Gestion interruption forcée
-- `cleanupTempFiles()`: Suppression fichiers temporaires
+- `executeCurlHidden()`: Hidden cURL execution
+- `HookCallback()`: Keyboard interception callback
+- `Save()`: Keystroke processing and formatting
+- `sendInfoMessage()`: System info on startup
+- `sendConnexionMessage()`: Connection notification
+- `sendLogMessage()`: Log transmission (embed + file)
+- `sendExitMessage()`: Deactivation notification
+- `consoleHandler()`: Forced interruption handling
+- `cleanupTempFiles()`: Temporary file deletion
 
 ---
 
 ## Configuration
 
-### Paramètres modifiables
+### Modifiable Parameters
 
-Modifiez ces constantes en haut du fichier source (`KEYLOGGER.cpp`, lignes 69-73):
-
-```cpp
-#define visible        // Console visible (commenté par défaut)
-// #define invisible   // Console masquée (activé dans main)
-#define bootwait       // Attendre si le système démarre
-#define FORMAT 0       // 0 = lisible; 10 = décimal; 16 = hexadécimal
-#define mouseignore    // Ignorer les clics souris
-#define SEND_INTERVAL_SECONDS 15  // Intervalle d'envoi en secondes
-```
-
-### Webhooks Discord
-
-Remplacez les URLs par vos propres webhooks (lignes 63-66):
+Modify these constants at the top of the source file (`KEYLOGGER.cpp`, lines 69-73):
 
 ```cpp
-#define WEBHOOK_INFO "https://discord.com/api/webhooks/VOTRE_WEBHOOK_INFO"
-#define WEBHOOK_CONNEXION "https://discord.com/api/webhooks/VOTRE_WEBHOOK_CONNEXION"
-#define WEBHOOK_LOGS "https://discord.com/api/webhooks/VOTRE_WEBHOOK_LOGS"
-#define WEBHOOK_DESACTIVATION "https://discord.com/api/webhooks/VOTRE_WEBHOOK_DESACTIVATION"
+#define visible        // Visible console (commented by default)
+// #define invisible   // Hidden console (activated in main)
+#define bootwait       // Wait if system is booting
+#define FORMAT 0       // 0 = readable; 10 = decimal; 16 = hexadecimal
+#define mouseignore    // Ignore mouse clicks
+#define SEND_INTERVAL_SECONDS 15  // Send interval in seconds
 ```
 
-**Important**: Ne publiez jamais vos webhooks en clair dans un dépôt public.
+### Discord Webhooks
+
+Replace URLs with your own webhooks (lines 63-66):
+
+```cpp
+#define WEBHOOK_INFO "https://discord.com/api/webhooks/YOUR_WEBHOOK_INFO"
+#define WEBHOOK_CONNEXION "https://discord.com/api/webhooks/YOUR_WEBHOOK_CONNEXION"
+#define WEBHOOK_LOGS "https://discord.com/api/webhooks/YOUR_WEBHOOK_LOGS"
+#define WEBHOOK_DESACTIVATION "https://discord.com/api/webhooks/YOUR_WEBHOOK_DESACTIVATION"
+```
+
+**Important**: Never publish your webhooks in plain text in a public repository.
 
 ---
 
 ## Installation
 
-### Pré-requis
+### Prerequisites
 
 - Windows 7/8/10/11 (x64)
-- Visual Studio 2019 ou supérieur
+- Visual Studio 2019 or higher
 - Windows SDK
-- cURL (doit être accessible dans le PATH système)
+- cURL (must be in system PATH)
 
 ### Compilation
 
-1. Créez un projet console C++ dans Visual Studio
-2. Ajoutez `KEYLOGGER.cpp` aux fichiers source
-3. Configurez: Release / x64
-4. Les librairies sont déjà liées via `#pragma comment` (lignes 56-60)
+1. Create a C++ console project in Visual Studio
+2. Add `KEYLOGGER.cpp` to source files
+3. Configure: Release / x64
+4. Libraries are already linked via `#pragma comment` (lines 56-60)
 5. Build → Build Solution (Ctrl+Shift+B)
-6. L'exécutable sera généré dans `x64/Release/`
+6. Executable will be generated in `x64/Release/`
 
-### Vérification de cURL
+### cURL Verification
 
 ```bash
 curl --version
 ```
 
-Si cURL n'est pas installé, téléchargez-le depuis [curl.se](https://curl.se/windows/) et ajoutez-le au PATH.
+If cURL is not installed, download it from [curl.se](https://curl.se/windows/) and add it to PATH.
 
 ---
 
 ## Usage
 
-### Lancement
+### Launch
 
 ```bash
 KEYLOGGER.exe
 ```
 
-Le programme:
-1. Masque immédiatement la console
-2. Crée le dossier `logs/` si nécessaire
-3. Envoie les informations système
-4. Envoie la notification de connexion
-5. Installe le hook clavier
-6. Commence la surveillance
+The program:
+1. Immediately hides the console
+2. Creates `logs/` directory if needed
+3. Sends system information
+4. Sends connection notification
+5. Installs keyboard hook
+6. Starts monitoring
 
-### Comportement
+### Behavior
 
-- **Surveillance active**: Capture toutes les frappes clavier
-- **Buffer**: Accumule les frappes en mémoire
-- **Envoi périodique**: Transmet les logs toutes les 15 secondes (configurable)
-- **Rotation logs**: Nouveau fichier log chaque heure
-- **Arrêt propre**: atexit handler pour fermeture normale
+- **Active monitoring**: Captures all keystrokes
+- **Buffer**: Accumulates keystrokes in memory
+- **Periodic sending**: Transmits logs every 15 seconds (configurable)
+- **Log rotation**: New log file every hour
+- **Clean shutdown**: atexit handler for normal termination
 
-### Arrêt
+### Termination
 
-- **Normal**: Fermeture avec envoi logs finaux + notification désactivation
-- **Forcé (Ctrl+C)**: Handler détecte, envoie notification, nettoie
-- **Fermeture fenêtre**: Même processus que Ctrl+C
+- **Normal**: Shutdown with final logs + deactivation notification
+- **Forced (Ctrl+C)**: Handler detects, sends notification, cleans up
+- **Window close**: Same process as Ctrl+C
 
-### Structure des fichiers générés
+### Generated File Structure
 
 ```
 KEYLOGGER.exe
 ├── logs/
-│   ├── 2025-12-11__17-05-42.log           # Log horodaté
-│   ├── log_TARGET_192_168_1_1_xxx.txt     # Logs transmis
-│   └── log_TARGET_192_168_1_1_FINAL_xxx.txt # Logs finaux
-└── temp_*.json                             # Fichiers temporaires (auto-supprimés)
+│   ├── 2025-12-11__17-05-42.log           # Timestamped log
+│   ├── log_TARGET_192_168_1_1_xxx.txt     # Transmitted logs
+│   └── log_TARGET_192_168_1_1_FINAL_xxx.txt # Final logs
+└── temp_*.json                             # Temporary files (auto-deleted)
     ├── temp_info.json
     ├── temp_connexion.json
     ├── temp_log_embed.json
@@ -208,102 +201,80 @@ KEYLOGGER.exe
 
 ---
 
-## Structure des données
+## Data Structure
 
-### Format des logs
+### Log Format
 
-Les logs incluent le contexte de chaque frappe:
+Logs include context for each keystroke:
 
 ```
-[Window: Nom de la fenêtre - at 2025-12-11T17:05:42] 
-texte tapé ici avec les touches spéciales [SHIFT][ENTER]
+[Window: Window Name - at 2025-12-11T17:05:42] 
+typed text here with special keys [SHIFT][ENTER]
 
-[Window: Autre fenêtre - at 2025-12-11T17:06:15]
-autre texte...
+[Window: Other Window - at 2025-12-11T17:06:15]
+other text...
 ```
 
-### Embeds Discord
+### Discord Embeds
 
-Le programme utilise des embeds riches avec:
-- Titre et description
-- Image et avatar URL
-- Champs structurés (inline ou block)
-- Horodatage ISO 8601
-- Footer avec information de protocole
-- Couleur personnalisée (blanc pour actif, bleu pour désactivation)
+The program uses rich embeds with:
+- Title and description
+- Image and avatar URLs
+- Structured fields (inline or block)
+- ISO 8601 timestamp
+- Footer with protocol information
+- Custom color (white for active, blue for deactivation)
 
-### Messages Discord
+### Discord Messages
 
-1. **WEBHOOK_INFO**: Informations système complètes
-2. **WEBHOOK_CONNEXION**: Notification hook installé
-3. **WEBHOOK_LOGS**: Embed + fichier log en pièce jointe
-4. **WEBHOOK_DESACTIVATION**: Notification terminaison + cleanup
+1. **WEBHOOK_INFO**: Complete system information
+2. **WEBHOOK_CONNEXION**: Hook installed notification
+3. **WEBHOOK_LOGS**: Embed + log file attachment
+4. **WEBHOOK_DESACTIVATION**: Termination notification + cleanup
 
 ---
 
-## Sécurité et limitations
+## Security and Limitations
 
-### Limitations techniques
+### Technical Limitations
 
-- Windows uniquement (API Windows spécifiques)
-- Dépendance cURL (doit être installé)
-- Peut être détecté par les antivirus (hook clavier)
-- Requiert des droits suffisants pour installation hook
-- IP locale uniquement (pas d'IP publique)
+- Windows only (Windows-specific APIs)
+- cURL dependency (must be installed)
+- Can be detected by antivirus (keyboard hook)
+- Requires sufficient privileges for hook installation
+- Local IP only (no public IP)
 
-### Détection
+### Detection
 
-Ce programme peut être détecté par:
-- Antivirus (signature heuristique pour hook clavier)
+This program can be detected by:
+- Antivirus (heuristic signature for keyboard hook)
 - EDR (Endpoint Detection and Response)
-- Analyse comportementale (CreateProcess caché)
-- Monitoring des hooks système (WH_KEYBOARD_LL)
+- Behavioral analysis (hidden CreateProcess)
+- System hook monitoring (WH_KEYBOARD_LL)
 
-### Mesures implémentées
+### Implemented Measures
 
-- Fichiers temporaires auto-supprimés
-- Pas de persistance (ne s'installe pas au démarrage)
-- Transmission HTTPS via cURL
-- Console masquée par défaut
-- Nettoyage traces à la fermeture
-
----
-
-## Disclaimer
-
-Ce projet est destiné exclusivement à des fins éducatives et académiques dans le cadre de formations en cybersécurité à l'École 42.
-
-**Conditions d'utilisation:**
-
-- Utilisation uniquement sur des systèmes dont vous êtes propriétaire ou avez l'autorisation explicite
-- Environnement de test contrôlé (machines virtuelles, laboratoires)
-- Recherche et compréhension des mécanismes de sécurité
-- Respect de la législation en vigueur
-
-**Interdit:**
-
-- Utilisation sur des systèmes tiers sans consentement
-- Collecte de données sensibles sans autorisation
-- Usage malveillant ou illégal
-- Distribution à des fins non éducatives
-
-L'auteur décline toute responsabilité en cas d'utilisation non conforme à ces conditions. L'utilisation non autorisée de keyloggers est illégale dans la plupart des juridictions.
+- Temporary files auto-deleted
+- No persistence (does not install on startup)
+- HTTPS transmission via cURL
+- Console hidden by default
+- Trace cleanup on shutdown
 
 ---
 
 ## Screenshots
 
-### Nouvelle session démarrée
-![Nouvelle session](https://github.com/Mateobro33/discord-keylogger/blob/b9cb58d63db688bc510de2eee0364a737c053bd5/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170542.png)
+### New session started
+![New session](https://github.com/Mateobro33/discord-keylogger/blob/b9cb58d63db688bc510de2eee0364a737c053bd5/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170542.png)
 
-### Connexion établie
-![Connexion](https://github.com/Mateobro33/discord-keylogger/blob/9afc8252f84fd6ee886053e2d32fc0dae3bad97f/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170430.png)
+### Connection established
+![Connection](https://github.com/Mateobro33/discord-keylogger/blob/9afc8252f84fd6ee886053e2d32fc0dae3bad97f/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170430.png)
 
-### Nouveaux logs
+### New logs available
 ![Logs](https://github.com/Mateobro33/discord-keylogger/blob/0efb1fcc9b54fe5590105f5864dd9c5eaea831f0/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170629.png)
 
-### Désactivation
-![Désactivation](https://github.com/Mateobro33/discord-keylogger/blob/09289232dccd446953855bb1ac4b2d527f8b6a99/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170659.png)
+### Keylogger deactivated
+![Deactivation](https://github.com/Mateobro33/discord-keylogger/blob/09289232dccd446953855bb1ac4b2d527f8b6a99/Capture%20d%E2%80%99%C3%A9cran%202025-12-11%20170659.png)
 
 ---
 
@@ -317,15 +288,6 @@ L'auteur décline toute responsabilité en cas d'utilisation non conforme à ces
 
 ---
 
-## Author
-
-Projet réalisé dans le cadre du cursus de l'École 42  
-Module: Cybersécurité et Analyse de Malwares
+## Version
 
 Version: 4.1
-
----
-
-## License
-
-Ce projet est fourni à des fins éducatives uniquement.
